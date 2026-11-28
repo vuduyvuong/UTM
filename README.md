@@ -1,237 +1,146 @@
-# SkyPermit UTM
+# SkyPermit UTM — Khối 1: Đăng ký, Cấp phép Bay 4D & Quản lý Không phận (Port 8080)
 
-Website quản lý người vận hành, UAV và kế hoạch bay 4D phục vụ đề tài UTM.
-Hướng dẫn này dùng **SQL Server chạy bên ngoài ứng dụng**, quản lý database bằng
-**SQL Server Management Studio (SSMS)** và cấu hình trong file `.properties`.
-Không cần tạo file `.env` hoặc thiết lập biến môi trường.
+Hệ thống UTM hoàn chỉnh gồm **3 nhánh độc lập** trên cùng repository và kết nối khép kín theo thời gian thực:
 
-## 1. Chuẩn bị
+| Nhánh Git | Thành phần | Công nghệ | Cổng (Port) |
+| --- | --- | --- | --- |
+| `main` (nhánh này) | **Khối 1 — SkyPermit UTM**: Đăng ký UAV, nộp & duyệt kế hoạch bay 4D, Geozone, Nhật ký, Điều phối tích hợp | Java 21 + Spring Boot + H2 / SQL Server | `8080` |
+| `simulation` | **Khối 2 — Bộ mô phỏng PX4 SITL**: Động lực học 6-DOF, MAVLink, SQLite, tự đồng bộ UAV từ Khối 1 & phát telemetry 10Hz | Python + FastAPI + Uvicorn + SQLite | `8001` |
+| `3D` | **Khối 4 — Giám sát 3D & Chiến thuật**: Bản đồ 3D CesiumJS/Three.js Đà Nẵng, dự báo quỹ đạo 12s, cảnh báo & gửi lệnh MAVLink | React 19 + TypeScript + CesiumJS / Python FastAPI | `3000` & `8000` |
 
-- JDK 21 trở lên, lệnh `java -version` nhận đúng Java đã cài.
-- SQL Server Database Engine, ví dụ instance `SQLEXPRESS` trên máy cá nhân.
-- SSMS để tạo database, chạy script SQL và xem dữ liệu.
-- SQL Server đã bật TCP/IP và cho phép tài khoản SQL Authentication đăng nhập.
+---
 
-SSMS là công cụ quản trị. Dữ liệu được lưu trong SQL Server, không nằm trong
-file database H2 của dự án khi sử dụng profile `sqlserver`.
-Maven Wrapper đã có sẵn, không cần cài Maven riêng.
+## 1. Yêu cầu môi trường
 
-## 2. Tạo database bằng SSMS
+- **Git**
+- **JDK 21 trở lên** (`java -version` nhận đúng Java 21+) — dùng cho nhánh `main` (đã có sẵn `mvnw.cmd` / `./mvnw`, không cần cài Maven riêng).
+- **Python 3.10 trở lên** (`python --version`) — dùng cho nhánh `simulation` và backend nhánh `3D`.
+- **Node.js 20 trở lên** (`node -v`, `npm -v`) — dùng cho frontend nhánh `3D`.
 
-Mở SSMS, kết nối đến SQL Server:
+---
 
-| Mục | Ví dụ |
-| --- | --- |
-| Server type | Database Engine |
-| Server name | `.\SQLEXPRESS` hoặc `localhost\SQLEXPRESS` |
-| Authentication | SQL Server Authentication, hoặc Windows Authentication để quản trị |
-| Database của ứng dụng | `utm` |
+## 2. Chạy trọn bộ cả 3 nhánh trên máy (Quickstart 5 phút)
 
-Với lần cài đặt mới, mở **New Query** và tạo database:
-
-```sql
-CREATE DATABASE utm;
-GO
-USE utm;
-GO
-```
-
-Chọn database `utm`, mở và chạy một lần file
-[sqlserver-schema.sql](src/main/resources/db/sqlserver-schema.sql).
-Script tạo các bảng nghiệp vụ, bảng bàn giao tích hợp và bảng đánh dấu migration.
-Tài khoản ứng dụng cấu hình ở bước tiếp theo phải có quyền truy cập database này.
-Tài khoản Windows dùng để mở SSMS không tự trở thành tài khoản JDBC của ứng dụng.
-
-**Nếu database đã có dữ liệu:** không chạy lại script tạo schema mới. Bản hiện tại
-áp dụng các script bổ sung loại UAV và tích hợp trong lúc khởi động. Với database
-cũ chưa có các cột hồ sơ doanh nghiệp, xem thêm
-[sqlserver-business-registration.sql](src/main/resources/db/sqlserver-business-registration.sql).
-Quy trình nâng cấp và chuyển đổi giờ UTC được ghi trong
-[tài liệu tích hợp](docs/integration.md).
-
-## 3. Cấu hình bằng file properties
-
-Tạo hoặc cập nhật `application-local.properties` tại thư mục gốc dự án,
-cùng cấp với `pom.xml` và `mvnw.cmd`:
-
-```properties
-spring.profiles.active=sqlserver
-
-UTM_DB_URL=jdbc:sqlserver://localhost;instanceName=SQLEXPRESS;databaseName=utm;encrypt=true;trustServerCertificate=true
-UTM_DB_USERNAME=ten_dang_nhap_sql
-UTM_DB_PASSWORD=mat_khau_sql_cua_ban
-
-utm.integration.mode=mock
-```
-
-Thay tên đăng nhập và mật khẩu bằng tài khoản SQL Server của bạn.
-Các khóa `UTM_DB_URL`, `UTM_DB_USERNAME`, `UTM_DB_PASSWORD` ở trên là **thuộc tính
-đọc từ file**, được profile SQL Server sử dụng; không phải thao tác khai báo biến
-môi trường. File này đã được loại khỏi Git qua `.gitignore`.
-
-Tên server `.\SQLEXPRESS` trong SSMS tương ứng với `localhost` và
-`instanceName=SQLEXPRESS` trong JDBC URL. Không nhập nguyên `.\SQLEXPRESS` vào
-vị trí tên host trong URL mẫu. `trustServerCertificate=true` trong ví dụ dùng
-cho SQL Server cục bộ với chứng chỉ tự ký.
-
-Nếu SQL Server dùng cổng TCP cố định, có thể thay riêng dòng URL bằng:
-
-```properties
-UTM_DB_URL=jdbc:sqlserver://localhost:1433;databaseName=utm;encrypt=true;trustServerCertificate=true
-```
-
-Thay `1433` bằng cổng thực tế của SQL Server. Khi kết nối theo tên instance,
-cần SQL Server Browser hoạt động hoặc chuyển sang URL dùng cổng TCP cố định.
-
-## 4. Tạo ADMIN đầu tiên
-
-Thêm tạm hai dòng sau vào cùng file `application-local.properties`:
-
-```properties
-utm.bootstrap.username=admin
-utm.bootstrap.password=thay_bang_mat_khau_rieng_tu_12_ky_tu
-```
-
-Sau lần khởi động tạo ADMIN thành công, xóa hai dòng bootstrap này khỏi file.
-Không có tài khoản quản trị mặc định. Bootstrap chỉ tạo username chưa tồn tại,
-không đổi mật khẩu hoặc vai trò của tài khoản đã có. Vì vậy, chọn username chưa
-đăng ký nếu cần khởi tạo ADMIN mới.
-
-## 5. Chạy trên Windows
-
-Mở PowerShell tại thư mục gốc dự án rồi chạy:
+### Bước 1: Clone cả 3 nhánh vào 3 thư mục ngang hàng
 
 ```powershell
+mkdir utm-system && cd utm-system
+
+git clone -b main --single-branch https://github.com/vuduyvuong/UTM.git utm-khoi1
+git clone -b simulation --single-branch https://github.com/vuduyvuong/UTM.git utm-khoi2
+git clone -b 3D --single-branch https://github.com/vuduyvuong/UTM.git utm-khoi4
+```
+
+### Bước 2: Cài đặt thư viện cho từng khối (chỉ làm 1 lần đầu)
+
+```powershell
+# 1. Khối 1 (main): tạo file cấu hình local từ mẫu
+Copy-Item .\utm-khoi1\application-local.properties.example .\utm-khoi1\application-local.properties
+
+# 2. Khối 2 (simulation): cài thư viện Python
+python -m pip install -r .\utm-khoi2\requirements.txt
+
+# 3. Khối 4 (3D): cài thư viện Python backend & Node.js frontend
+python -m pip install -r .\utm-khoi4\backend\requirements.txt
+npm --prefix .\utm-khoi4 install
+```
+
+### Bước 3: Mở 4 cửa sổ Terminal để chạy toàn hệ thống
+
+- **Terminal 1 — Khối 1 (SkyPermit UTM `:8080`)**:
+  ```powershell
+  cd utm-khoi1
+  .\mvnw.cmd spring-boot:run
+  ```
+- **Terminal 2 — Khối 2 (PX4 Simulator `:8001`)**:
+  ```powershell
+  cd utm-khoi2
+  python -m uvicorn khoi2_px4_simulator.main:app --host 0.0.0.0 --port 8001
+  ```
+- **Terminal 3 — Khối 4 Backend (FastAPI `:8000`)**:
+  ```powershell
+  cd utm-khoi4
+  python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+  ```
+- **Terminal 4 — Khối 4 Frontend (Web 3D `:3000`)**:
+  ```powershell
+  cd utm-khoi4
+  npm run dev -- --host 127.0.0.1 --port 3000
+  ```
+
+*(Trên Linux/macOS, thay `Copy-Item` bằng `cp` và `.\mvnw.cmd` bằng `./mvnw`.)*
+
+### Bước 4: Mở trình duyệt & kiểm thử luồng khép kín
+
+| Giao diện | Địa chỉ |
+| --- | --- |
+| Cổng Đăng ký & Cấp phép Bay (Khối 1) | http://localhost:8080 |
+| Swagger API Khối 1 | http://localhost:8080/swagger-ui.html |
+| Trạm Mô phỏng PX4 / MAVLink 3D (Khối 2) | http://localhost:8001 |
+| Trạm Giám sát Không lưu 3D (Khối 4) | http://localhost:3000 |
+| API Chiến thuật & Handoff Khối 4 | http://127.0.0.1:8000/docs |
+
+**Kịch bản demo nối thông 3 khối:**
+1. Mở http://localhost:8080, đăng ký tài khoản `OPERATOR` mới, khai báo UAV (ví dụ `MULTIROTOR`, serial tùy chọn) rồi nộp kế hoạch bay 4D ở khu vực Đà Nẵng.
+2. Đăng nhập tài khoản `ADMIN` (`admin` / `admin123@sky` nếu dùng [application-local.properties.example](application-local.properties.example)) để **Duyệt (APPROVED)** kế hoạch bay.
+3. Khối 1 tự động gửi bản tin sang cả Khối 4 (`:8000`) và Khối 2 (`:8001`); đồng thời Khối 2 tự động đồng bộ danh sách UAV mới đăng ký từ Khối 1 mỗi 5 giây và cất cánh mô phỏng.
+4. Mở http://localhost:3000 ở chế độ **LIVE**: thấy UAV bay thực tế kèm quỹ đạo dự báo nét đứt 12s, có thể gửi lệnh điều khiển MAVLink trực tiếp sang Khối 2 và đồng bộ tiến độ/quyết định ngược về Khối 1.
+
+---
+
+## 3. Chạy riêng Khối 1 (SkyPermit UTM)
+
+### Cách A: Dùng H2 Database tích hợp sẵn (Khuyên dùng, chạy ngay)
+
+Tạo `application-local.properties` từ file mẫu [application-local.properties.example](application-local.properties.example):
+
+```powershell
+Copy-Item application-local.properties.example application-local.properties
 .\mvnw.cmd spring-boot:run
 ```
 
-Truy cập **http://localhost:8080**. Dừng ứng dụng bằng `Ctrl+C`.
-Không cần chạy database bằng Maven; SQL Server là dịch vụ riêng và phải hoạt động
-trước khi khởi động website. Có thể mở SSMS đồng thời để xem các bảng trong `utm`.
+- Nếu chỉ muốn test riêng Khối 1 mà chưa bật Khối 2/Khối 4, sửa dòng `utm.integration.mode=mock` trong `application-local.properties`.
+- Dữ liệu H2 được lưu tự động tại `./data/utm-v2-db` (đã được `.gitignore` loại khỏi Git).
+- `application-local.properties` chứa cấu hình khởi tạo tài khoản mẫu `admin` / `admin123@sky` và `manager` / `manager123@sky`. Với môi trường thật, hãy đổi mật khẩu (tối thiểu 12 ký tự) hoặc xóa 4 dòng `utm.bootstrap.*` sau lần chạy đầu.
 
-Ứng dụng đọc `application-local.properties` theo thư mục đang chạy. Nếu mở bằng
-IDE, đặt working directory về thư mục gốc dự án. Thiếu cấu hình profile `sqlserver`
-thì cấu hình nền vẫn có thể dùng H2; để làm việc với database trong SSMS, giữ dòng
-`spring.profiles.active=sqlserver` như ví dụ.
+### Cách B: Dùng SQL Server + SSMS (Tùy chọn)
 
-Profile SQL Server dùng `ddl-auto=validate`. Bộ khởi tạo riêng của dự án vẫn chạy
-migration bổ sung trước bước validate; tài khoản khởi động cần quyền ALTER/CREATE
-cho những thay đổi này hoặc quản trị viên áp dụng script trước.
+1. Mở SSMS, tạo database `utm`:
+   ```sql
+   CREATE DATABASE utm;
+   GO
+   USE utm;
+   GO
+   ```
+2. Chạy một lần file [sqlserver-schema.sql](src/main/resources/db/sqlserver-schema.sql) trên database `utm`. (Nếu nâng cấp database cũ chưa có cột hồ sơ doanh nghiệp, xem thêm [sqlserver-business-registration.sql](src/main/resources/db/sqlserver-business-registration.sql).)
+3. Trong `application-local.properties`, bỏ comment phần `spring.profiles.active=sqlserver`, `UTM_DB_URL`, `UTM_DB_USERNAME`, `UTM_DB_PASSWORD` và điền thông tin tài khoản SQL Authentication của bạn.
+4. Chạy `.\mvnw.cmd spring-boot:run`.
 
-## 6. Chức năng và phân quyền
+---
 
-| Vai trò | Chức năng |
+## 4. Phân quyền & API chính
+
+| Vai trò | Tài khoản mẫu | Quyền hạn chính |
+| --- | --- | --- |
+| `OPERATOR` | Tự đăng ký trên web | Quản lý UAV của mình, nộp/kích hoạt/hoàn tất/hủy kế hoạch bay, xem nhật ký riêng, xuất CSV, xem telemetry thuộc phạm vi `OWN_ONLY` |
+| `MANAGER` | `manager` / `manager123@sky` | Quản lý Geozone tĩnh/động (`NFZ`, `RESTRICTED`, `TFR_UVR`), theo dõi toàn hệ thống (`ALL_SYSTEM`), xem nhật ký & tích hợp |
+| `ADMIN` | `admin` / `admin123@sky` | Duyệt/từ chối/thu hồi kế hoạch bay, quản lý người dùng & vai trò, gửi lại bản tin tích hợp |
+
+| Nhóm | Endpoint chính |
 | --- | --- |
-| OPERATOR | Đăng ký cá nhân/doanh nghiệp, quản lý UAV của mình, nộp/hủy kế hoạch, xem kết quả và tải lộ trình đã duyệt |
-| MANAGER | Xem dữ liệu toàn hệ thống, theo dõi kế hoạch, cập nhật Đang bay/Hoàn thành, xem nhật ký và tích hợp |
-| ADMIN | Các quyền quản lý; duyệt/từ chối kế hoạch, quản lý người dùng/vai trò, khóa/mở khóa và gửi lại bản tin tích hợp |
+| Xác thực | `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/logout` |
+| Người dùng & Vai trò | `/api/users`, `/api/roles` |
+| Phương tiện & Kế hoạch | `/api/drones`, `/api/flights`, `POST /api/flights/batch`, `PUT /api/flights/{id}/status`, `PUT /api/flights/{id}/revoke`, `GET /api/flights/export.csv` |
+| Vùng cấm / Hạn chế bay | `/api/geozones` |
+| Nhật ký & Bàn giao | `/api/logs`, `GET /api/logs/my`, `GET /api/flights/{id}/integration`, `GET /api/integrations`, `POST /api/integrations/{id}/retry` |
+| Tích hợp Khối 2 & Khối 4 | `GET /api/integration/registered-uavs`, `POST /api/integration/monitoring-updates`, `POST /api/integration/monitoring-decisions`, `GET /api/integration/monitoring-feed` |
 
-Đăng ký công khai luôn nhận OPERATOR. ADMIN tạo hoặc gán MANAGER và các vai trò
-khác trong trang Người dùng. Vai trò tùy chỉnh hiện là danh mục, chưa có cơ chế
-cấp quyền nghiệp vụ động.
+---
 
-Luồng sử dụng:
-
-1. Đăng ký hoặc đăng nhập bằng username.
-2. Khai báo UAV: Multirotor, Fixed-wing hoặc Hybrid VTOL; nhập thông số phương tiện.
-3. Chọn UAV, nhập điểm đi/đến, giờ cất/hạ cánh và các waypoint 4D.
-4. Gửi kế hoạch để ADMIN duyệt hoặc từ chối kèm ghi chú.
-5. User xem kết quả và tải JSON lộ trình đã duyệt; hệ thống tạo bản tin bàn giao.
-
-Một đợt gửi có tối đa **50 UAV**, mỗi UAV một kế hoạch và được duyệt riêng, dùng
-chung mã đợt `submissionId`. Độ cao kế hoạch mới từ **0–120 m AGL**, là tham số
-mô phỏng của đề tài. Thời gian waypoint đầu/cuối phải khớp giờ cất/hạ cánh, thời
-lượng không vượt khả năng UAV. Không cho một UAV có hai kế hoạch đang mở trùng giờ.
-
-Trạng thái chính: `PENDING → APPROVED → ACTIVE → COMPLETED`.
-Có nhánh `PENDING → REJECTED`; operator có thể hủy PENDING/APPROVED trước cất cánh.
-Giờ nhập/hiển thị trên web là UTC+7; API trả UTC. Kế hoạch cũ giữ mốc độ cao AMSL.
-
-## 7. Chuẩn bị tích hợp mock
-
-Chọn chế độ ngay trong `application-local.properties`:
-
-```properties
-utm.integration.mode=mock
-```
-
-- `mock`: lưu bản tin cho hai đích SIMULATION/MONITORING và phản hồi `MOCK_DELIVERED`.
-- `disabled`: lưu bản tin PENDING, chưa tiếp nhận giả lập.
-
-Sau khi đổi cấu hình, khởi động lại ứng dụng. Tab **Tích hợp** cho phép
-ADMIN/MANAGER xem bản tin; ADMIN có thể gửi lại bản tin đang chờ hoặc bị lỗi.
-
-Các sự kiện gồm `flightplan.accepted`, `flightplan.cancelled` và
-`flightplan.status.changed`. Mock chỉ ghi nhận dữ liệu cục bộ, **chưa chạy
-SITL/Gazebo, giám sát CesiumJS hoặc kiểm tra xung đột không gian bằng AI**.
-
-## 8. Dữ liệu và API
-
-Các bảng nghiệp vụ: `roles`, `users`, `drones`, `flight_plans`, `system_logs`,
-`integration_deliveries`. Bảng `utm_migrations` ghi nhận migration.
-Khóa chính dùng UUID; thao tác xóa nghiệp vụ là xóa mềm.
-
-| Nhóm | API chính |
-| --- | --- |
-| Xác thực | `/api/auth/register`, `/api/auth/login`, `/api/auth/me`, `/api/auth/logout` |
-| Người dùng và vai trò | `/api/users`, `/api/roles` |
-| Phương tiện | `/api/drones` |
-| Kế hoạch | `/api/flights`, `POST /api/flights/batch` |
-| Xét duyệt | `PUT /api/flights/{id}/status` |
-| Lộ trình đã duyệt | `GET /api/flights/{id}/accepted-plan` |
-| Bàn giao | `GET /api/flights/{id}/integration`, `GET /api/integrations` |
-| Gửi lại bản tin | `POST /api/integrations/{id}/retry` |
-| Nhật ký | `/api/logs` |
-
-API nghiệp vụ yêu cầu cookie phiên đăng nhập và kiểm tra quyền trên server.
-Chi tiết payload, phân trang và luồng tích hợp nằm trong các tài liệu bên dưới.
-
-### Thử API bằng Swagger
-
-Sau khi khởi động ứng dụng, mở:
-
-- **Swagger UI:** http://localhost:8080/swagger-ui.html
-- **OpenAPI JSON:** http://localhost:8080/v3/api-docs
-
-Quy trình thử API:
-
-1. Mở nhóm **Xác thực**, chọn `POST /api/auth/login`, bấm **Try it out**.
-2. Nhập username và password của tài khoản đã có, bấm **Execute**. Có thể dùng
-   `POST /api/auth/register` để tạo tài khoản OPERATOR mới.
-3. Khi đăng nhập thành công, trình duyệt tự giữ cookie phiên `JSESSIONID` và gửi
-   trong các yêu cầu sau trên cùng địa chỉ. Không cần nhập token hoặc cookie vào
-   **Authorize**. Dùng cùng hostname, ví dụ `localhost`, cho cả đăng nhập và Swagger.
-4. Mở API cần thử, điền query/path/body rồi bấm **Execute**. Chọn các UUID có thật
-   của tài khoản đang đăng nhập; thời gian bay phải ở tương lai. `trajectoryJson`
-   là chuỗi chứa mảng JSON waypoint 4D, không phải mảng trực tiếp.
-5. Dùng tài khoản ADMIN để duyệt/từ chối; MANAGER chỉ điều hành kế hoạch đã duyệt.
-   `POST /api/auth/logout` kết thúc phiên hiện tại.
-
-Các thao tác POST/PUT/DELETE trong Swagger thay đổi dữ liệu của database đang
-cấu hình cho ứng dụng. Swagger dùng cùng quy tắc xác thực và phân quyền với website.
-Các tham số phân trang, bộ lọc và mô tả trường dữ liệu được hiển thị trong giao diện.
-
-## 9. Tài liệu và trạng thái xác minh
-
-- [Phân quyền](docs/access-control.md).
-- [Tích hợp và nâng cấp database](docs/integration.md).
-- [JSON Schema bản tin](docs/contracts/flightplan-event.schema.json).
-- [Bản tin mẫu](docs/contracts/flightplan-accepted.example.json).
-- [Cấu trúc và hướng dẫn demo](docs/implementation.md).
-- [Những phần còn lại](docs/backlog.md).
-- Tài liệu gốc của đề tài: thư mục `23_10/`.
-- Nhật ký làm việc Word: thư mục `docs/work-logs/`.
-
-Chạy toàn bộ kiểm thử tại thư mục gốc:
+## 5. Chạy kiểm thử tự động
 
 ```powershell
 .\mvnw.cmd test
 ```
 
-Test dùng H2 riêng, bỏ qua `application-local.properties` và không kết nối SQL
-Server đang dùng. Không cần đổi cấu hình database hoặc truyền profile qua lệnh.
-Kết quả ngày 19/11/2026 sau khi bổ sung Swagger:
-**28 test đạt, 0 thất bại, 0 lỗi, 0 bỏ qua**. Bộ test kiểm tra Swagger UI, tài liệu
-OpenAPI, xác thực phiên và các nghiệp vụ hiện có. Hai test hồi quy kiểm tra cách
-gửi script SQL Server thành một batch và cách tách câu lệnh H2 bằng JDBC giả lập.
-Kết quả này chưa xác minh migration hoặc khởi động trên SQL Server thật.
+*(Bộ test sử dụng H2 in-memory độc lập, không ảnh hưởng tới database đang chạy.)*

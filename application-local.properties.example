@@ -1,0 +1,26 @@
+# ==============================================================================
+# SkyPermit UTM - Cấu hình chạy cục bộ (Khối 1 - Port 8080)
+# Sao chép file này thành "application-local.properties" cùng cấp với pom.xml
+# ==============================================================================
+
+# 1. Tích hợp vòng kín thực tế sang Khối 4 (Giám sát 3D :8000) & Khối 2 (PX4 Simulator :8001)
+#    Dùng "mock" nếu chỉ muốn test riêng Khối 1 mà không cần chạy Khối 2 & Khối 4.
+utm.integration.mode=http
+utm.integration.monitoring-url=http://127.0.0.1:8000/api/integration/flight-plans
+utm.integration.simulation-url=http://127.0.0.1:8001/api/integration/flight-plans
+# Đặt cùng UTM_MONITORING_TOKEN với nhánh 3D nếu bật xác thực chữ ký bản tin:
+# utm.integration.monitoring-token=
+
+# 2. Tài khoản quản trị khởi tạo lần đầu (mật khẩu bắt buộc >= 12 ký tự)
+#    Sau khi khởi động lần đầu tạo tài khoản thành công, có thể xóa hoặc đổi mật khẩu.
+utm.bootstrap.username=admin
+utm.bootstrap.password=admin123@sky
+utm.bootstrap.manager-username=manager
+utm.bootstrap.manager-password=manager123@sky
+
+# 3. [Mặc định] Dùng H2 file database (./data/utm-v2-db) - KHÔNG CẦN CÀI SQL SERVER
+#    Chỉ bỏ comment các dòng dưới đây nếu bạn muốn dùng SQL Server + SSMS thay cho H2:
+# spring.profiles.active=sqlserver
+# UTM_DB_URL=jdbc:sqlserver://localhost;instanceName=SQLEXPRESS;databaseName=utm;encrypt=true;trustServerCertificate=true
+# UTM_DB_USERNAME=ten_dang_nhap_sql
+# UTM_DB_PASSWORD=mat_khau_sql_cua_ban
